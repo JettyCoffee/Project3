@@ -45,7 +45,8 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[0, 0].set_title('Training and Validation Loss')
     axes[0, 0].legend()
     axes[0, 0].grid(True, alpha=0.3)
-    
+    axes[0, 0].set_xticks(list(epochs))  # x轴以1为间隔
+
     # 准确率曲线
     axes[0, 1].plot(epochs, history['train_acc'], 'b-', label='Train Acc', linewidth=2)
     axes[0, 1].plot(epochs, history['val_acc'], 'r-', label='Val Acc', linewidth=2)
@@ -54,7 +55,8 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[0, 1].set_title('Training and Validation Accuracy')
     axes[0, 1].legend()
     axes[0, 1].grid(True, alpha=0.3)
-    
+    axes[0, 1].set_xticks(list(epochs))  # x轴以1为间隔
+
     # 学习率曲线
     axes[1, 0].plot(epochs, history['lr'], 'g-', linewidth=2)
     axes[1, 0].set_xlabel('Epoch')
@@ -62,7 +64,8 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[1, 0].set_title('Learning Rate Schedule')
     axes[1, 0].set_yscale('log')
     axes[1, 0].grid(True, alpha=0.3)
-    
+    axes[1, 0].set_xticks(list(epochs))  # x轴以1为间隔
+
     # 训练-验证准确率差异
     acc_diff = [t - v for t, v in zip(history['train_acc'], history['val_acc'])]
     axes[1, 1].plot(epochs, acc_diff, 'm-', linewidth=2)
@@ -71,6 +74,7 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[1, 1].set_ylabel('Accuracy Difference (%)')
     axes[1, 1].set_title('Train-Val Accuracy Gap (Overfitting Indicator)')
     axes[1, 1].grid(True, alpha=0.3)
+    axes[1, 1].set_xticks(list(epochs))  # x轴以1为间隔
     
     plt.tight_layout()
     

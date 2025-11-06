@@ -16,7 +16,7 @@ class Config:
     
     # 设备配置
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    NUM_WORKERS = 4  # 数据加载的工作进程数
+    NUM_WORKERS = 8  # 数据加载的工作进程数
     
     # 数据集配置
     DATASET_NAME = 'CIFAR10'
@@ -30,23 +30,23 @@ class Config:
     # 数据划分
     TRAIN_RATIO = 0.9  # 训练集占比（从原训练集中划分）
     VAL_RATIO = 0.1    # 验证集占比
-    
+
     # 训练超参数
     BATCH_SIZE = 128
-    NUM_EPOCHS = 100
-    LEARNING_RATE = 0.1
-    MOMENTUM = 0.9
-    WEIGHT_DECAY = 5e-4
+    NUM_EPOCHS = 32 
+    LEARNING_RATE = 0.1 # 初始学习率
+    MOMENTUM = 0.9 # 动量因子
+    WEIGHT_DECAY = 1e-3 # L2正则化系数
     
     # 学习率调度
     LR_SCHEDULER = 'cosine'  # 'cosine', 'step', 'multistep'
-    LR_STEP_SIZE = 30
-    LR_GAMMA = 0.1
-    LR_MILESTONES = [60, 120, 160]
+    LR_STEP_SIZE = 40 # cosine不需要该参数
+    LR_GAMMA = 0.1 # 
+    LR_MILESTONES = [60, 120, 160] # 多步调度的里程碑
     
     # 早停配置
     EARLY_STOPPING = True
-    PATIENCE = 15  # 在验证集上多少个epoch没有提升就停止
+    PATIENCE = 5  # 在验证集上多少个epoch没有提升就停止
     MIN_DELTA = 0.001  # 最小改善量
     
     # 模型选择
@@ -58,7 +58,7 @@ class Config:
     RANDOM_CROP = True
     RANDOM_HORIZONTAL_FLIP = True
     CUTOUT = True
-    CUTOUT_LENGTH = 16
+    CUTOUT_LENGTH = 4
     
     # 正则化配置
     USE_DROPOUT = True
@@ -68,7 +68,7 @@ class Config:
     # 训练技巧
     MIXUP = False  # Mixup数据增强
     MIXUP_ALPHA = 1.0
-    LABEL_SMOOTHING = 0.0  # 标签平滑
+    LABEL_SMOOTHING = 0.1  # 标签平滑
     
     # 日志和保存
     SAVE_FREQ = 10  # 每隔多少个epoch保存一次模型
