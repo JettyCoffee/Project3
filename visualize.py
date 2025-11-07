@@ -10,6 +10,7 @@ import os
 from sklearn.metrics import confusion_matrix
 
 from config import Config
+from grad_cam import visualize_gradcam, get_target_layer
 
 
 def plot_training_curves(history_path=None, save_path=None):
@@ -45,7 +46,7 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[0, 0].set_title('Training and Validation Loss')
     axes[0, 0].legend()
     axes[0, 0].grid(True, alpha=0.3)
-    axes[0, 0].set_xticks(list(epochs))  # x轴以1为间隔
+    axes[0, 0].set_xticks(list(range(0, len(epochs)+1, 5)))  # x轴以5为间隔
 
     # 准确率曲线
     axes[0, 1].plot(epochs, history['train_acc'], 'b-', label='Train Acc', linewidth=2)
@@ -55,7 +56,7 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[0, 1].set_title('Training and Validation Accuracy')
     axes[0, 1].legend()
     axes[0, 1].grid(True, alpha=0.3)
-    axes[0, 1].set_xticks(list(epochs))  # x轴以1为间隔
+    axes[0, 1].set_xticks(list(range(0, len(epochs)+1, 5)))  # x轴以5为间隔
 
     # 学习率曲线
     axes[1, 0].plot(epochs, history['lr'], 'g-', linewidth=2)
@@ -64,7 +65,7 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[1, 0].set_title('Learning Rate Schedule')
     axes[1, 0].set_yscale('log')
     axes[1, 0].grid(True, alpha=0.3)
-    axes[1, 0].set_xticks(list(epochs))  # x轴以1为间隔
+    axes[1, 0].set_xticks(list(range(0, len(epochs)+1, 5)))  # x轴以5为间隔
 
     # 训练-验证准确率差异
     acc_diff = [t - v for t, v in zip(history['train_acc'], history['val_acc'])]
@@ -74,7 +75,7 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[1, 1].set_ylabel('Accuracy Difference (%)')
     axes[1, 1].set_title('Train-Val Accuracy Gap (Overfitting Indicator)')
     axes[1, 1].grid(True, alpha=0.3)
-    axes[1, 1].set_xticks(list(epochs))  # x轴以1为间隔
+    axes[1, 1].set_xticks(list(range(0, len(epochs)+1, 5)))  # x轴以5为间隔
     
     plt.tight_layout()
     
@@ -302,27 +303,59 @@ def visualize_all(evaluator):
     plot_training_curves()
     
     # 2. 混淆矩阵
-    plot_confusion_matrix(evaluator.all_targets, evaluator.all_predictions, normalize=False)
-    plot_confusion_matrix(evaluator.all_targets, evaluator.all_predictions, normalize=True)
+    plot_confusion_matrix(evaluator.all_targets, evaluator.all_predictions)
     
     # 3. 每类准确率
-    cm = evaluator.compute_confusion_matrix()
-    per_class_acc = cm.diagonal() / cm.sum(axis=1)
+    per_class_acc = evaluator.compute_per_class_accuracy()
     plot_per_class_accuracy(per_class_acc)
     
     # 4. 误分类样本
-    if len(evaluator.misclassified_samples) > 0:
-        plot_misclassified_samples(
-            evaluator.misclassified_samples,
-            num_samples=min(20, len(evaluator.misclassified_samples))
+    if Config.PLOT_MISCLASSIFIED:
+        _, sorted_misclassified = evaluator.analyze_misclassified_samples(
+            Config.NUM_MISCLASSIFIED_SAMPLES
         )
+        plot_misclassified_samples(sorted_misclassified, Config.NUM_MISCLASSIFIED_SAMPLES)
     
-    # 5. 混淆对
+    # 5. Top混淆对
     confusion_pairs = evaluator.get_confusion_pairs()
-    if len(confusion_pairs) > 0:
-        plot_top_confusion_pairs(confusion_pairs, top_k=10)
+    plot_top_confusion_pairs(confusion_pairs)
+    
+    # 6. Grad-CAM可视化
+    if Config.ENABLE_GRADCAM:
+        print("\nGenerating Grad-CAM visualizations...")
+        try:
+            # 获取目标层
+            model_name = evaluator.model.__class__.__name__.lower()
+            if hasattr(evaluator, 'checkpoint') and 'config' in evaluator.checkpoint:
+                model_name = evaluator.checkpoint['config'].get('MODEL_NAME', model_name)
+            
+            target_layer = get_target_layer(evaluator.model, model_name)
+            
+            if target_layer is not None:
+                # 获取一批测试数据
+                test_images, test_labels = next(iter(evaluator.test_loader))
+                test_images = test_images.to(evaluator.device)
+                
+                # 生成Grad-CAM
+                gradcam_dir = Config.GRADCAM_SAVE_DIR
+                os.makedirs(gradcam_dir, exist_ok=True)
+                
+                visualize_gradcam(
+                    evaluator.model,
+                    test_images,
+                    test_labels,
+                    Config.CLASS_NAMES,
+                    target_layer,
+                    save_dir=gradcam_dir,
+                    num_samples=Config.GRADCAM_NUM_SAMPLES
+                )
+            else:
+                print("Warning: Could not find target layer for Grad-CAM")
+        except Exception as e:
+            print(f"Warning: Grad-CAM visualization failed: {e}")
     
     print("\nAll visualizations completed!")
+    print(f"Results saved in: {Config.RESULTS_DIR}")
 
 
 def create_analysis_report(evaluator, save_path=None):

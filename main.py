@@ -176,7 +176,7 @@ Examples:
     
     # 训练相关参数
     parser.add_argument('--model', type=str, default=None,
-                       choices=['custom_cnn', 'resnet18', 'resnet34', 'vgg16', 'mobilenetv2'],
+                       choices=['custom_cnn', 'resnet18', 'resnet34', 'resnet50', 'vgg16', 'vit', 'vit_small', 'mobilenetv2'],
                        help='模型架构')
     parser.add_argument('--epochs', type=int, default=None,
                        help='训练轮数')

@@ -15,8 +15,8 @@ class Config:
     RESULTS_DIR = os.path.join(PROJECT_ROOT, 'results')
     
     # 设备配置
-    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    NUM_WORKERS = 8  # 数据加载的工作进程数
+    DEVICE = torch.device('cuda')
+    NUM_WORKERS = 8
     
     # 数据集配置
     DATASET_NAME = 'CIFAR10'
@@ -28,7 +28,7 @@ class Config:
                    'dog', 'frog', 'horse', 'ship', 'truck']
     
     # 数据划分
-    TRAIN_RATIO = 0.9  # 训练集占比（从原训练集中划分）
+    TRAIN_RATIO = 0.9  # 训练集占比
     VAL_RATIO = 0.1    # 验证集占比
 
     # 训练超参数
@@ -36,7 +36,7 @@ class Config:
     NUM_EPOCHS = 32 
     LEARNING_RATE = 0.1 # 初始学习率
     MOMENTUM = 0.9 # 动量因子
-    WEIGHT_DECAY = 1e-3 # L2正则化系数
+    WEIGHT_DECAY = 5e-4 # L2正则化系数
     
     # 学习率调度
     LR_SCHEDULER = 'cosine'  # 'cosine', 'step', 'multistep'
@@ -46,19 +46,19 @@ class Config:
     
     # 早停配置
     EARLY_STOPPING = True
-    PATIENCE = 5  # 在验证集上多少个epoch没有提升就停止
+    PATIENCE = 15  # 在验证集上多少个epoch没有提升就停止
     MIN_DELTA = 0.001  # 最小改善量
     
     # 模型选择
-    MODEL_NAME = 'resnet18'  # 'custom_cnn', 'resnet18', 'resnet34', 'vgg16', 'mobilenetv2'
-    PRETRAINED = False  # 是否使用预训练权重
+    MODEL_NAME = 'resnet18'  # 'custom_cnn', 'resnet18', 'resnet34', 'resnet50', 'vgg16', 'vit', 'vit_small', 'mobilenetv2'
+    PRETRAINED = True  # 是否使用预训练权重
     
     # 数据增强配置
     DATA_AUGMENTATION = True
     RANDOM_CROP = True
     RANDOM_HORIZONTAL_FLIP = True
     CUTOUT = True
-    CUTOUT_LENGTH = 4
+    CUTOUT_LENGTH = 16
     
     # 正则化配置
     USE_DROPOUT = True
@@ -69,6 +69,12 @@ class Config:
     MIXUP = False  # Mixup数据增强
     MIXUP_ALPHA = 1.0
     LABEL_SMOOTHING = 0.1  # 标签平滑
+    
+    # 损失函数配置
+    LOSS_FUNCTION = 'cross_entropy'  # 'cross_entropy', 'focal', 'label_smoothing', 'combined'
+    FOCAL_GAMMA = 2.0  # Focal Loss的gamma参数
+    FOCAL_ALPHA = None  # Focal Loss的alpha参数（类别权重）
+    SMOOTHING_EPSILON = 0.1  # Label Smoothing的epsilon参数
     
     # 日志和保存
     SAVE_FREQ = 10  # 每隔多少个epoch保存一次模型
@@ -84,6 +90,11 @@ class Config:
     NUM_MISCLASSIFIED_SAMPLES = 20  # 展示的误分类样本数量
     SAVE_CONFUSION_MATRIX = True
     SAVE_TRAINING_CURVES = True
+    
+    # Grad-CAM可视化配置
+    ENABLE_GRADCAM = True  # 是否启用Grad-CAM可视化
+    GRADCAM_NUM_SAMPLES = 9  # Grad-CAM可视化的样本数量
+    GRADCAM_SAVE_DIR = 'results'  # Grad-CAM保存目录
     
     # 种子设置（用于结果可复现）
     SEED = 42

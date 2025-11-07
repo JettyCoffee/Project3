@@ -274,10 +274,10 @@ class Trainer:
                 self.scheduler.step()
                 # 如果学习率低于0.001，固定为0.001
                 new_lr = self.optimizer.param_groups[0]['lr']
-                if new_lr < 0.01:
-                    for param_group in self.optimizer.param_groups:
-                        param_group['lr'] = 0.01
-                    print(f"  Learning rate adjusted: {new_lr:.6f} -> 0.001000 (minimum threshold)")
+            #    if new_lr < 0.01:
+            #        for param_group in self.optimizer.param_groups:
+            #            param_group['lr'] = 0.01
+            #        print(f"  Learning rate adjusted: {new_lr:.6f} -> 0.001000 (minimum threshold)")
             
             # 记录历史
             self.history['train_loss'].append(train_loss)

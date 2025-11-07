@@ -36,11 +36,12 @@ class Evaluator:
         if checkpoint_path is None:
             checkpoint_path = os.path.join(Config.CHECKPOINT_DIR, 'best_model.pth')
         
+        self.checkpoint = None
         if os.path.exists(checkpoint_path):
             print(f"Loading model from {checkpoint_path}")
-            checkpoint = torch.load(checkpoint_path, map_location=self.device)
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-            print(f"Model loaded. Best validation accuracy: {checkpoint.get('best_val_acc', 'N/A')}")
+            self.checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            self.model.load_state_dict(self.checkpoint['model_state_dict'])
+            print(f"Model loaded. Best validation accuracy: {self.checkpoint.get('best_val_acc', 'N/A')}")
         else:
             print(f"Warning: Checkpoint {checkpoint_path} not found. Using untrained model.")
         

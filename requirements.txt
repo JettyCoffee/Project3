@@ -12,6 +12,9 @@ pandas>=2.0.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 
+# 图像处理
+opencv-python>=4.8.0
+
 # 机器学习工具
 scikit-learn>=1.3.0
 
