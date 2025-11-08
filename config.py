@@ -33,7 +33,7 @@ class Config:
 
     # 训练超参数
     BATCH_SIZE = 128
-    NUM_EPOCHS = 32 
+    NUM_EPOCHS = 100
     LEARNING_RATE = 0.1 # 初始学习率
     MOMENTUM = 0.9 # 动量因子
     WEIGHT_DECAY = 5e-4 # L2正则化系数
@@ -50,7 +50,7 @@ class Config:
     MIN_DELTA = 0.001  # 最小改善量
     
     # 模型选择
-    MODEL_NAME = 'resnet18'  # 'custom_cnn', 'resnet18', 'resnet34', 'resnet50', 'vgg16', 'vit', 'vit_small', 'mobilenetv2'
+    MODEL_NAME = 'wide_resnet_small'  # 'resnet18', 'resnet34', 'resnet50', 'wide_resnet', 'wide_resnet_small', 'dla34', 'vit', 'vit_small'
     PRETRAINED = True  # 是否使用预训练权重
     
     # 数据增强配置

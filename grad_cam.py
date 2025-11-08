@@ -35,10 +35,12 @@ class GradCAM:
     def _register_hooks(self):
         """注册前向和反向传播钩子"""
         def forward_hook(module, input, output):
-            self.activations = output.detach()
+            # 克隆输出以避免视图问题
+            self.activations = output.clone().detach()
         
         def backward_hook(module, grad_input, grad_output):
-            self.gradients = grad_output[0].detach()
+            # 克隆梯度以避免视图问题
+            self.gradients = grad_output[0].clone().detach()
         
         # 注册钩子
         forward_handle = self.target_layer.register_forward_hook(forward_hook)
@@ -64,6 +66,9 @@ class GradCAM:
             cam: 类激活图
             predicted_class: 预测类别
         """
+        # 确保输入是可以求梯度的，并且不是视图
+        input_image = input_image.clone().detach().requires_grad_(True)
+        
         # 前向传播
         self.model.eval()
         output = self.model(input_image)
@@ -80,7 +85,12 @@ class GradCAM:
         one_hot[0][target_class] = 1
         output.backward(gradient=one_hot, retain_graph=True)
         
+        # 检查梯度是否成功捕获
+        if self.gradients is None:
+            raise RuntimeError("Gradients not captured. Please check target layer.")
+        
         # 计算权重 (全局平均池化梯度)
+        # 梯度和激活值已经在hook中克隆过了
         weights = torch.mean(self.gradients, dim=(2, 3), keepdim=True)
         
         # 加权求和
@@ -194,6 +204,9 @@ def visualize_gradcam(model, images, labels, class_names, target_layer,
     """
     os.makedirs(save_dir, exist_ok=True)
     
+    # 暂时禁用模型的训练模式（例如Cutout在eval模式下不应该执行）
+    model.eval()
+    
     # 初始化Grad-CAM
     grad_cam = GradCAM(model, target_layer)
     
@@ -207,42 +220,50 @@ def visualize_gradcam(model, images, labels, class_names, target_layer,
     axes = axes.flatten() if num_samples > 1 else [axes]
     
     for idx, sample_idx in enumerate(indices):
-        image = images[sample_idx:sample_idx+1]
-        true_label = labels[sample_idx].item()
-        
-        # 生成CAM
-        cam, predicted_class = grad_cam.generate_cam(image)
-        
-        # 准备显示
-        img = image[0].cpu().numpy().transpose(1, 2, 0)
-        
-        # 反归一化（假设使用CIFAR-10的标准化）
-        mean = np.array([0.4914, 0.4822, 0.4465])
-        std = np.array([0.2470, 0.2435, 0.2616])
-        img = img * std + mean
-        img = np.clip(img, 0, 1)
-        
-        # 调整CAM大小
-        cam_resized = cv2.resize(cam, (img.shape[1], img.shape[0]))
-        
-        # 创建热力图
-        heatmap = cv2.applyColorMap(np.uint8(255 * cam_resized), cv2.COLORMAP_JET)
-        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB) / 255.0
-        
-        # 叠加热力图
-        superimposed = heatmap * 0.4 + img * 0.6
-        superimposed = np.clip(superimposed, 0, 1)
-        
-        # 显示
-        ax = axes[idx]
-        ax.imshow(superimposed)
-        ax.axis('off')
-        
-        # 标题
-        title = f'True: {class_names[true_label]}\n'
-        title += f'Pred: {class_names[predicted_class]}'
-        color = 'green' if true_label == predicted_class else 'red'
-        ax.set_title(title, fontsize=10, color=color)
+        try:
+            # 克隆图像以避免视图问题
+            image = images[sample_idx:sample_idx+1].clone()
+            true_label = labels[sample_idx].item()
+            
+            # 生成CAM
+            cam, predicted_class = grad_cam.generate_cam(image)
+            
+            # 准备显示
+            img = image[0].cpu().numpy().transpose(1, 2, 0)
+            
+            # 反归一化（假设使用CIFAR-10的标准化）
+            mean = np.array([0.4914, 0.4822, 0.4465])
+            std = np.array([0.2470, 0.2435, 0.2616])
+            img = img * std + mean
+            img = np.clip(img, 0, 1)
+            
+            # 调整CAM大小
+            cam_resized = cv2.resize(cam, (img.shape[1], img.shape[0]))
+            
+            # 创建热力图
+            heatmap = cv2.applyColorMap(np.uint8(255 * cam_resized), cv2.COLORMAP_JET)
+            heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB) / 255.0
+            
+            # 叠加热力图
+            superimposed = heatmap * 0.4 + img * 0.6
+            superimposed = np.clip(superimposed, 0, 1)
+            
+            # 显示
+            ax = axes[idx]
+            ax.imshow(superimposed)
+            ax.axis('off')
+            
+            # 标题
+            title = f'True: {class_names[true_label]}\n'
+            title += f'Pred: {class_names[predicted_class]}'
+            color = 'green' if true_label == predicted_class else 'red'
+            ax.set_title(title, fontsize=10, color=color)
+        except Exception as e:
+            print(f"Warning: Failed to generate Grad-CAM for sample {sample_idx}: {e}")
+            ax = axes[idx]
+            ax.axis('off')
+            ax.text(0.5, 0.5, f'Failed\n{str(e)[:30]}', 
+                   ha='center', va='center', transform=ax.transAxes)
     
     # 隐藏多余的子图
     for idx in range(num_samples, len(axes)):
@@ -271,14 +292,44 @@ def get_target_layer(model, model_name):
     """
     model_name = model_name.lower()
     
-    if 'resnet' in model_name:
+    if 'wide' in model_name and 'resnet' in model_name:
+        # Wide ResNet：使用layer3的最后一个块的第二个卷积层
+        try:
+            # 获取layer3的最后一个WideBasicBlock
+            last_block = model.layer3[-1]
+            return last_block.conv2
+        except:
+            # 备用方案：找到最后一个卷积层
+            last_conv = None
+            for module in model.modules():
+                if isinstance(module, nn.Conv2d):
+                    last_conv = module
+            return last_conv
+    elif 'resnet' in model_name:
         # ResNet系列：使用最后一个卷积层
-        return model.layer4[-1].conv2
+        if hasattr(model, 'layer4'):
+            return model.layer4[-1].conv2
+        elif hasattr(model, 'layer3'):
+            return model.layer3[-1].conv2
+        else:
+            # 备用方案
+            last_conv = None
+            for module in model.modules():
+                if isinstance(module, nn.Conv2d):
+                    last_conv = module
+            return last_conv
     elif 'vgg' in model_name:
         # VGG系列：使用features的最后一个卷积层
         for layer in reversed(list(model.features)):
             if isinstance(layer, nn.Conv2d):
                 return layer
+    elif 'dla' in model_name:
+        # DLA：使用level5的最后一个卷积层
+        last_conv = None
+        for module in model.level5.modules():
+            if isinstance(module, nn.Conv2d):
+                last_conv = module
+        return last_conv if last_conv else model.fc
     elif 'custom' in model_name:
         # 自定义CNN：使用conv6
         return model.conv6
