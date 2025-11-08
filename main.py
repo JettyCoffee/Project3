@@ -328,6 +328,8 @@ Examples:
     parser.add_argument('--device', type=str, default=None,
                        choices=['cpu', 'cuda'],
                        help='计算设备')
+    parser.add_argument('--gpu-id', type=int, default=None,
+                       help='GPU编号 (例如: 0, 1, 2...)')
     
     args = parser.parse_args()
     
@@ -335,8 +337,14 @@ Examples:
     set_seed(args.seed)
     
     # 设置设备
-    if args.device:
-        Config.DEVICE = torch.device(args.device)
+    if args.gpu_id is not None:
+        Config.GPU_ID = args.gpu_id
+        Config.DEVICE = torch.device(f'cuda:{args.gpu_id}' if torch.cuda.is_available() else 'cpu')
+    elif args.device:
+        if args.device == 'cuda':
+            Config.DEVICE = torch.device(f'cuda:{Config.GPU_ID}' if torch.cuda.is_available() else 'cpu')
+        else:
+            Config.DEVICE = torch.device(args.device)
     
     # 创建必要目录
     create_directories()
@@ -349,7 +357,9 @@ Examples:
     print(f"CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
         print(f"CUDA version: {torch.version.cuda}")
-        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"Number of GPUs: {torch.cuda.device_count()}")
+        print(f"Current GPU ID: {Config.GPU_ID}")
+        print(f"GPU: {torch.cuda.get_device_name(Config.GPU_ID)}")
     print(f"Device: {Config.DEVICE}")
     print(f"Random seed: {args.seed}")
     print("="*60)
