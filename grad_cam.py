@@ -328,6 +328,145 @@ def visualize_gradcam(model, images, labels, class_names, target_layer,
     grad_cam.remove_hooks()
 
 
+def visualize_gradcam_per_class(model, data_loader, class_names, target_layer, 
+                                save_dir='results/gradcam', samples_per_class=1):
+    """
+    为每个类别生成Grad-CAM可视化，确保包含所有10个类别
+    
+    Args:
+        model: 模型
+        data_loader: 数据加载器
+        class_names: 类别名称列表
+        target_layer: 目标层
+        save_dir: 保存目录
+        samples_per_class: 每个类别的样本数量
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # 设置模型为评估模式
+    model.eval()
+    
+    # 初始化Grad-CAM
+    grad_cam = GradCAM(model, target_layer)
+    
+    num_classes = len(class_names)
+    
+    # 收集每个类别的样本
+    class_samples = {i: [] for i in range(num_classes)}
+    
+    print(f"Collecting samples for each class...")
+    device = next(model.parameters()).device
+    
+    # 遍历数据集收集每个类别的样本
+    for images, labels in data_loader:
+        images = images.to(device)
+        labels = labels.to(device)
+        
+        for i in range(len(images)):
+            label = labels[i].item()
+            if len(class_samples[label]) < samples_per_class:
+                class_samples[label].append((images[i:i+1], label))
+        
+        # 检查是否所有类别都收集到足够的样本
+        if all(len(samples) >= samples_per_class for samples in class_samples.values()):
+            break
+    
+    # 检查每个类别是否都有样本
+    missing_classes = [i for i in range(num_classes) if len(class_samples[i]) == 0]
+    if missing_classes:
+        print(f"⚠ Warning: No samples found for classes: {[class_names[i] for i in missing_classes]}")
+    
+    # 创建可视化网格
+    rows = num_classes
+    cols = samples_per_class
+    fig, axes = plt.subplots(rows, cols, figsize=(5*cols, 5*rows))
+    
+    # 确保axes是二维数组
+    if rows == 1 and cols == 1:
+        axes = np.array([[axes]])
+    elif rows == 1:
+        axes = axes.reshape(1, -1)
+    elif cols == 1:
+        axes = axes.reshape(-1, 1)
+    
+    print(f"\nGenerating Grad-CAM for all {num_classes} classes...")
+    
+    # 为每个类别生成可视化
+    for class_idx in range(num_classes):
+        samples = class_samples[class_idx]
+        
+        for sample_idx in range(samples_per_class):
+            # 正确处理二维索引
+            if isinstance(axes, np.ndarray) and axes.ndim == 2:
+                ax = axes[class_idx, sample_idx]
+            elif isinstance(axes, np.ndarray) and axes.ndim == 1:
+                ax = axes[class_idx]
+            else:
+                ax = axes
+            
+            if sample_idx < len(samples):
+                try:
+                    image, true_label = samples[sample_idx]
+                    
+                    # 生成CAM
+                    cam, predicted_class = grad_cam.generate_cam(image)
+                    
+                    # 准备原始图像显示
+                    img = image[0].cpu().numpy().transpose(1, 2, 0)
+                    
+                    # 反归一化（CIFAR-10标准化参数）
+                    mean = np.array([0.4914, 0.4822, 0.4465])
+                    std = np.array([0.2470, 0.2435, 0.2616])
+                    img = img * std + mean
+                    img = np.clip(img, 0, 1)
+                    
+                    # 将CAM调整到与图像相同的大小
+                    cam_resized = cv2.resize(cam, (img.shape[1], img.shape[0]))
+                    
+                    # 创建热力图（使用JET colormap）
+                    heatmap = cv2.applyColorMap(np.uint8(255 * cam_resized), cv2.COLORMAP_JET)
+                    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB) / 255.0
+                    
+                    # 叠加热力图和原始图像
+                    superimposed = heatmap * 0.4 + img * 0.6
+                    superimposed = np.clip(superimposed, 0, 1)
+                    
+                    # 显示
+                    ax.imshow(superimposed)
+                    ax.axis('off')
+                    
+                    # 设置标题（正确预测用绿色，错误用红色）
+                    title = f'{class_names[true_label]}\nPred: {class_names[predicted_class]}'
+                    color = 'green' if true_label == predicted_class else 'red'
+                    ax.set_title(title, fontsize=10, color=color, fontweight='bold')
+                    
+                    print(f"  ✓ Class {class_idx+1}/{num_classes} ({class_names[class_idx]}), Sample {sample_idx+1}/{samples_per_class} completed")
+                    
+                except Exception as e:
+                    print(f"  ✗ Class {class_idx+1}/{num_classes} ({class_names[class_idx]}), Sample {sample_idx+1}/{samples_per_class} failed: {str(e)}")
+                    ax.axis('off')
+                    ax.text(0.5, 0.5, f'Failed\n{str(e)[:50]}', 
+                           ha='center', va='center', transform=ax.transAxes,
+                           fontsize=8, color='red')
+            else:
+                # 没有足够的样本
+                ax.axis('off')
+                ax.text(0.5, 0.5, 'No sample', 
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=10, color='gray')
+    
+    plt.tight_layout()
+    save_path = os.path.join(save_dir, 'gradcam_all_classes.png')
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f"\n✓ Grad-CAM visualization for all classes saved to {save_path}")
+    plt.close()
+    
+    # 清理
+    grad_cam.remove_hooks()
+    
+    return class_samples
+
+
 def get_target_layer(model, model_name):
     """
     根据模型类型获取目标层（用于Grad-CAM）
@@ -344,7 +483,7 @@ def get_target_layer(model, model_name):
     print(f"Finding target layer for model: {model_name}")
     
     try:
-        if 'wide_resnet' in model_name or 'wide' in model_name:
+        if 'wide_resnet' in model_name:
             # Wide ResNet：使用layer3的最后一个块的第二个卷积层
             target = model.layer3[-1].conv2
             print(f"  → Using layer3[-1].conv2")
@@ -360,32 +499,9 @@ def get_target_layer(model, model_name):
                 target = model.layer3[-1].conv2
                 print(f"  → Using layer3[-1].conv2")
                 return target
-                
-        elif 'vgg' in model_name:
-            # VGG：使用features中最后一个卷积层
-            for layer in reversed(list(model.features)):
-                if isinstance(layer, nn.Conv2d):
-                    print(f"  → Using last Conv2d in features")
-                    return layer
-                    
-        elif 'dla' in model_name:
-            # DLA：使用level5中的最后一个卷积层
-            last_conv = None
-            for module in model.level5.modules():
-                if isinstance(module, nn.Conv2d):
-                    last_conv = module
-            if last_conv is not None:
-                print(f"  → Using last Conv2d in level5")
-                return last_conv
-                
-        elif 'vit' in model_name or 'transformer' in model_name:
-            # Vision Transformer不适合传统Grad-CAM
-            print(f"  ⚠ Warning: ViT models are not suitable for Grad-CAM")
-            print(f"  → Using patch_embed.proj as fallback")
-            return model.patch_embed.proj
             
     except Exception as e:
-        print(f"  ⚠ Error finding specific layer: {e}")
+        print(f"  Error finding specific layer: {e}")
     
     # 默认方案：找到最后一个Conv2d层
     print(f"  → Using fallback: finding last Conv2d layer")

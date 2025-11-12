@@ -59,21 +59,16 @@ class EarlyStopping:
 
 class Trainer:
     """训练器类"""
-    def __init__(self):
-        self.device = Config.DEVICE
-        self.config = Config
+    def __init__(self, run_id=None):
+        # 使用提供的run_id或生成新的（基于模型名和时间戳）
+        if run_id:
+            self.run_id = run_id
+            print(f"Using provided run ID: {self.run_id}")
+        else:
+            timestamp = datetime.now().strftime("%m%d_%H%M%S")
+            self.run_id = f"{Config.MODEL_NAME}_{timestamp}"
+            print(f"Generated new run ID: {self.run_id}")
         
-        # 生成唯一的运行ID（基于模型名和时间戳）
-        timestamp = datetime.now().strftime("%m%d_%H%M%S")
-        self.run_id = f"{Config.MODEL_NAME}_{timestamp}"
-        print(f"Training run ID: {self.run_id}")
-        
-        # 数据加载
-
-        # 生成唯一的运行ID（基于模型名和时间戳）
-        timestamp = datetime.now().strftime("%m%d_%H%M%S")
-        self.run_id = f"{Config.MODEL_NAME}_{timestamp}"
-        print(f"Training run ID: {self.run_id}")
         self.device = Config.DEVICE
         self.config = Config
         
@@ -97,7 +92,7 @@ class Trainer:
         else:
             self.criterion = nn.CrossEntropyLoss()
         
-        # 优化器
+        # SGD优化器
         self.optimizer = optim.SGD(
             self.model.parameters(),
             lr=Config.LEARNING_RATE,
@@ -223,7 +218,6 @@ class Trainer:
     
     def save_checkpoint(self, epoch, val_acc, is_best=False):
         """保存检查点"""
-        # 使用Config类提供的方法获取可序列化的配置字典
         config_dict = Config.get_config_dict()
         
         checkpoint = {
@@ -236,24 +230,16 @@ class Trainer:
             'config': config_dict
         }
         
-        # 保存最新的检查点（使用唯一的文件名）
+        # 保存最新的检查点
         checkpoint_path = os.path.join(Config.CHECKPOINT_DIR, f'last_checkpoint_{self.run_id}.pth')
         torch.save(checkpoint, checkpoint_path)
         
-        # 同时保存一个通用的last_checkpoint.pth供兼容性（但可能被覆盖）
-        general_checkpoint_path = os.path.join(Config.CHECKPOINT_DIR, 'last_checkpoint.pth')
-        torch.save(checkpoint, general_checkpoint_path)
-        
-        # 保存最佳模型（使用唯一的文件名）
+        # 保存最佳模型
         if is_best:
             best_path = os.path.join(Config.CHECKPOINT_DIR, f'best_model_{self.run_id}.pth')
             torch.save(checkpoint, best_path)
             print(f"Saved best model to {best_path}")
             print(f"Validation accuracy: {val_acc:.2f}%")
-            
-            # 同时保存一个通用的best_model.pth供兼容性（但可能被覆盖）
-            general_best_path = os.path.join(Config.CHECKPOINT_DIR, 'best_model.pth')
-            torch.save(checkpoint, general_best_path)
     
     def load_checkpoint(self, checkpoint_path):
         """加载检查点"""
@@ -296,8 +282,7 @@ class Trainer:
             current_lr = self.optimizer.param_groups[0]['lr']
             if self.scheduler:
                 self.scheduler.step()
-                # 如果学习率低于0.001，固定为0.001
-                new_lr = self.optimizer.param_groups[0]['lr']
+            #    new_lr = self.optimizer.param_groups[0]['lr']
             #    if new_lr < 0.01:
             #        for param_group in self.optimizer.param_groups:
             #            param_group['lr'] = 0.01

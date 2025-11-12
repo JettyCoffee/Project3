@@ -1,7 +1,3 @@
-"""
-模型定义模块 - 实现多种CNN架构
-包括：自定义CNN、ResNet、VGG、MobileNetV2、Vision Transformer等
-"""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -36,9 +32,8 @@ class ResidualBlock(nn.Module):
         
         return out
 
-
 class Cutout(object):
-    """Cutout data augmentation"""
+    """Cutout的实现"""
     def __init__(self, n_holes=1, length=16):
         self.n_holes = n_holes
         self.length = length
@@ -264,7 +259,6 @@ class Tree(nn.Module):
 
 
 class DLA(nn.Module):
-    """Deep Layer Aggregation (DLA) for CIFAR-10"""
     def __init__(self, levels, channels, num_classes=10, block=BasicBlock, residual_root=False):
         super(DLA, self).__init__()
         self.channels = channels
@@ -491,8 +485,7 @@ class TransformerBlock(nn.Module):
 
 class VisionTransformer(nn.Module):
     """
-    Vision Transformer (ViT) for CIFAR-10
-    适配小图像尺寸的轻量级版本
+    ViT for CIFAR-10
     """
     def __init__(self, img_size=32, patch_size=4, in_channels=3, num_classes=10,
                  embed_dim=192, depth=12, num_heads=3, mlp_ratio=4.0, dropout=0.1):
@@ -595,9 +588,6 @@ def get_model(model_name='custom_cnn', num_classes=10, pretrained=False):
         model.fc = nn.Linear(model.fc.in_features, num_classes)
     
     elif model_name == 'wide_resnet':
-        # Wide ResNet with Cutout
-        #model = WideResNet(depth=28, widen_factor=10, dropout_rate=0.3, 
-        #                  num_classes=num_classes, cutout_length=16)
         model = WideResNet(depth=28, widen_factor=10, dropout_rate=0.3, 
                           num_classes=num_classes, cutout_length=16)
 
@@ -624,38 +614,9 @@ def get_model(model_name='custom_cnn', num_classes=10, pretrained=False):
     
     return model
 
-
-def count_parameters(model):
-    """统计模型参数量"""
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
 if __name__ == "__main__":
-    # 测试所有模型
-    print("Testing models...")
-    
-    models_to_test = ['resnet18', 'wide_resnet', 'wide_resnet_small', 'dla34', 'vit', 'vit_small']
-    
-    for model_name in models_to_test:
-        print(f"\n{'='*50}")
-        print(f"Model: {model_name}")
-        print('='*50)
-        
-        try:
-            model = get_model(model_name, num_classes=10, pretrained=False)
-            
-            # 统计参数
-            params = count_parameters(model)
-            print(f"Total parameters: {params:,}")
-            
-            # 测试前向传播
-            x = torch.randn(2, 3, 32, 32)
-            with torch.no_grad():
-                y = model(x)
-            print(f"Input shape: {x.shape}")
-            print(f"Output shape: {y.shape}")
-            print("✓ Model test passed")
-        except Exception as e:
-            print(f"✗ Model test failed: {e}")
-            import traceback
-            traceback.print_exc()
+    # 测试模型构建
+    model_names = ['resnet18', 'resnet34', 'resnet50', 'wide_resnet', 'dla34', 'vit']
+    for name in model_names:
+        model = get_model(model_name=name, num_classes=10, pretrained=False)
+        print(f"Model: {name}, Number of parameters: {sum(p.numel() for p in model.parameters())}")

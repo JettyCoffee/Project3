@@ -1,6 +1,6 @@
 """
 主程序入口 - 整合训练、评估和可视化流程
-支持命令行参数配置
+统一时间戳管理：确保训练、评估和可视化使用一致的时间戳
 """
 import argparse
 import os
@@ -15,6 +15,50 @@ from config import Config
 from train import Trainer
 from evaluate import evaluate_model
 from visualize import visualize_all, create_analysis_report
+
+
+class TimestampManager:
+    """统一的时间戳管理器 - 确保整个训练流程使用一致的时间戳"""
+    def __init__(self, model_name=None):
+        self.timestamp = datetime.datetime.now().strftime("%m%d_%H%M%S")
+        self.model_name = model_name or Config.MODEL_NAME
+        self.run_id = f"{self.model_name}_{self.timestamp}"
+        
+    def get_timestamp(self, format='full'):
+        """
+        获取格式化的时间戳
+        Args:
+            format: 'full' (%m%d_%H%M%S), 'short' (%m%d_%H%M), 'iso' (ISO 8601)
+        """
+        if format == 'full':
+            return self.timestamp
+        elif format == 'short':
+            return datetime.datetime.now().strftime("%m%d_%H%M")
+        elif format == 'iso':
+            return datetime.datetime.now().isoformat()
+        return self.timestamp
+    
+    def get_run_id(self):
+        """获取完整的运行ID（模型名_时间戳）"""
+        return self.run_id
+    
+    def get_checkpoint_path(self, checkpoint_type='best'):
+        """
+        获取检查点路径
+        Args:
+            checkpoint_type: 'best' 或 'last'
+        """
+        filename = f'{checkpoint_type}_model_{self.run_id}.pth'
+        return os.path.join(Config.CHECKPOINT_DIR, filename)
+    
+    def get_results_dir(self):
+        """获取结果目录路径"""
+        results_dir = os.path.join(Config.RESULTS_DIR, self.run_id)
+        os.makedirs(results_dir, exist_ok=True)
+        return results_dir
+    
+    def __str__(self):
+        return f"TimestampManager(run_id={self.run_id}, timestamp={self.timestamp})"
 
 
 def set_seed(seed):
@@ -46,37 +90,7 @@ def create_directories():
         print(f"  - {directory}")
 
 
-def rename_checkpoint_with_timestamp():
-    """训练完成后为检查点添加时间戳"""
-    checkpoint_dir = Config.CHECKPOINT_DIR
-    timestamp = datetime.datetime.now().strftime("%m%d_%H%M")
-    
-    # 重命名best_model.pth
-    best_model_path = os.path.join(checkpoint_dir, 'best_model.pth')
-    if os.path.exists(best_model_path):
-        new_best_path = os.path.join(checkpoint_dir, f'best_model_{timestamp}.pth')
-        shutil.move(best_model_path, new_best_path)
-        print(f"Best model renamed to: {new_best_path}")
-    
-    # 重命名last_checkpoint.pth
-    last_checkpoint_path = os.path.join(checkpoint_dir, 'last_checkpoint.pth')
-    if os.path.exists(last_checkpoint_path):
-        new_last_path = os.path.join(checkpoint_dir, f'last_checkpoint_{timestamp}.pth')
-        shutil.move(last_checkpoint_path, new_last_path)
-        print(f"Last checkpoint renamed to: {new_last_path}")
-    
-    return timestamp
-
-
-def create_timestamped_results_dir():
-    """创建带时间戳的结果目录"""
-    timestamp = datetime.datetime.now().strftime("%m%d_%H%M")
-    timestamped_dir = os.path.join(Config.RESULTS_DIR, timestamp)
-    os.makedirs(timestamped_dir, exist_ok=True)
-    return timestamped_dir, timestamp
-
-
-def save_hyperparameters(save_dir, args):
+def save_hyperparameters(save_dir, args, timestamp_manager=None):
     """保存当前测试的所有超参数到JSON文件"""
     import json
     
@@ -86,6 +100,8 @@ def save_hyperparameters(save_dir, args):
     # 添加命令行参数
     hyperparams = {
         'config': config_dict,
+        'run_id': timestamp_manager.get_run_id() if timestamp_manager else None,
+        'timestamp': timestamp_manager.get_timestamp('iso') if timestamp_manager else datetime.datetime.now().isoformat(),
         'command_line_args': {
             'mode': args.mode,
             'model': args.model,
@@ -98,7 +114,6 @@ def save_hyperparameters(save_dir, args):
             'seed': args.seed,
             'device': str(args.device) if args.device else None
         },
-        'timestamp': datetime.datetime.now().isoformat(),
         'pytorch_version': torch.__version__,
         'cuda_available': torch.cuda.is_available()
     }
@@ -116,11 +131,17 @@ def save_hyperparameters(save_dir, args):
     return hyperparams_path
 
 
-def train_mode(args):
+def train_mode(args, timestamp_manager=None):
     """训练模式"""
     print("\n" + "="*60)
     print("TRAINING MODE")
     print("="*60)
+    
+    # 创建时间戳管理器（如果没有提供）
+    if timestamp_manager is None:
+        timestamp_manager = TimestampManager(args.model or Config.MODEL_NAME)
+    
+    print(f"\n{timestamp_manager}")
     
     # 更新配置
     if args.model:
@@ -132,8 +153,8 @@ def train_mode(args):
     if args.lr:
         Config.LEARNING_RATE = args.lr
     
-    # 创建训练器
-    trainer = Trainer()
+    # 创建训练器，传入run_id
+    trainer = Trainer(run_id=timestamp_manager.get_run_id())
     
     # 如果指定了恢复训练
     if args.resume:
@@ -146,49 +167,52 @@ def train_mode(args):
     # 开始训练
     history = trainer.train()
     
-    # 获取训练器的run_id（包含模型名和时间戳）
-    run_id = trainer.run_id
+    print(f"\nTraining completed successfully! Run ID: {timestamp_manager.get_run_id()}")
+    print(f"Best model saved at: {timestamp_manager.get_checkpoint_path('best')}")
     
-    print(f"\nTraining completed successfully! Run ID: {run_id}")
-    print(f"Best model saved at: checkpoints/best_model_{run_id}.pth")
-    return history, run_id
+    return history, timestamp_manager
 
 
-def evaluate_mode(args, custom_results_dir=None):
+def evaluate_mode(args, timestamp_manager=None):
     """评估模式"""
     print("\n" + "="*60)
     print("EVALUATION MODE")
     print("="*60)
     
-    # 创建带时间戳的结果目录（如果没有提供自定义目录）
-    if custom_results_dir is None:
-        timestamped_dir, timestamp = create_timestamped_results_dir()
-        print(f"Results will be saved to: {timestamped_dir}")
-    else:
-        timestamped_dir = custom_results_dir
-        timestamp = os.path.basename(custom_results_dir)
+    # 创建时间戳管理器（如果没有提供）
+    if timestamp_manager is None:
+        timestamp_manager = TimestampManager(args.model or Config.MODEL_NAME)
+    
+    print(f"\n{timestamp_manager}")
+    
+    # 获取结果目录
+    results_dir = timestamp_manager.get_results_dir()
+    print(f"Results will be saved to: {results_dir}")
     
     # 临时更改Config.RESULTS_DIR
     original_results_dir = Config.RESULTS_DIR
-    Config.RESULTS_DIR = timestamped_dir
+    Config.RESULTS_DIR = results_dir
     
     # 确定检查点路径
     if args.checkpoint:
         checkpoint_path = args.checkpoint
     else:
-        checkpoint_path = os.path.join(Config.CHECKPOINT_DIR, 'best_model.pth')
+        # 尝试使用timestamp_manager提供的路径，如果不存在则使用默认
+        checkpoint_path = timestamp_manager.get_checkpoint_path('best')
+        if not os.path.exists(checkpoint_path):
+            checkpoint_path = os.path.join(Config.CHECKPOINT_DIR, 'best_model.pth')
     
     try:
         # 复制训练历史文件到结果目录（如果存在）
         history_path = os.path.join(Config.LOG_DIR, 'training_history.json')
         if os.path.exists(history_path):
-            target_history_path = os.path.join(timestamped_dir, 'training_history.json')
+            target_history_path = os.path.join(results_dir, 'training_history.json')
             shutil.copy2(history_path, target_history_path)
             print(f"Training history copied to: {target_history_path}")
         
         # 复制最佳模型到结果目录
         if os.path.exists(checkpoint_path):
-            target_model_path = os.path.join(timestamped_dir, os.path.basename(checkpoint_path))
+            target_model_path = os.path.join(results_dir, os.path.basename(checkpoint_path))
             shutil.copy2(checkpoint_path, target_model_path)
             print(f"Model checkpoint copied to: {target_model_path}")
         
@@ -202,15 +226,15 @@ def evaluate_mode(args, custom_results_dir=None):
             create_analysis_report(evaluator)
         
         # 保存超参数信息
-        save_hyperparameters(timestamped_dir, args)
+        save_hyperparameters(results_dir, args, timestamp_manager)
         
         print("\nEvaluation completed successfully!")
-        print(f"All results saved in: {timestamped_dir}")
+        print(f"All results saved in: {results_dir}")
         
         # 恢复原始结果目录
         Config.RESULTS_DIR = original_results_dir
             
-        return evaluator, results, timestamp
+        return evaluator, results, timestamp_manager
         
     except Exception as e:
         # 恢复原始结果目录
@@ -218,7 +242,7 @@ def evaluate_mode(args, custom_results_dir=None):
         raise e
 
 
-def visualize_mode(args):
+def visualize_mode(args, timestamp_manager=None):
     """可视化模式"""
     print("\n" + "="*60)
     print("VISUALIZATION MODE")
@@ -226,29 +250,43 @@ def visualize_mode(args):
     
     from evaluate import Evaluator
     
-    # 创建带时间戳的结果目录
-    timestamped_dir, timestamp = create_timestamped_results_dir()
-    print(f"Results will be saved to: {timestamped_dir}")
+    # 创建时间戳管理器（如果没有提供）
+    if timestamp_manager is None:
+        timestamp_manager = TimestampManager(args.model or Config.MODEL_NAME)
+    
+    print(f"\n{timestamp_manager}")
+    
+    # 获取结果目录
+    results_dir = timestamp_manager.get_results_dir()
+    print(f"Results will be saved to: {results_dir}")
     
     # 临时更改Config.RESULTS_DIR
     original_results_dir = Config.RESULTS_DIR
-    Config.RESULTS_DIR = timestamped_dir
+    Config.RESULTS_DIR = results_dir
     
     try:
         # 复制训练历史文件到结果目录（如果存在）
         history_path = os.path.join(Config.LOG_DIR, 'training_history.json')
         if os.path.exists(history_path):
-            target_history_path = os.path.join(timestamped_dir, 'training_history.json')
+            target_history_path = os.path.join(results_dir, 'training_history.json')
             shutil.copy2(history_path, target_history_path)
             print(f"Training history copied to: {target_history_path}")
         
-        # 创建评估器
-        checkpoint_path = args.checkpoint if args.checkpoint else None
+        # 确定检查点路径
+        if args.checkpoint:
+            checkpoint_path = args.checkpoint
+        else:
+            checkpoint_path = timestamp_manager.get_checkpoint_path('best')
+            if not os.path.exists(checkpoint_path):
+                checkpoint_path = None
+        
+        # 复制模型文件
         if checkpoint_path and os.path.exists(checkpoint_path):
-            target_model_path = os.path.join(timestamped_dir, os.path.basename(checkpoint_path))
+            target_model_path = os.path.join(results_dir, os.path.basename(checkpoint_path))
             shutil.copy2(checkpoint_path, target_model_path)
             print(f"Model checkpoint copied to: {target_model_path}")
         
+        # 创建评估器
         evaluator = Evaluator(checkpoint_path)
         
         # 评估（生成数据）
@@ -259,15 +297,15 @@ def visualize_mode(args):
         create_analysis_report(evaluator)
         
         # 保存超参数信息
-        save_hyperparameters(timestamped_dir, args)
+        save_hyperparameters(results_dir, args, timestamp_manager)
         
         print("\nVisualization completed successfully!")
-        print(f"All results saved in: {timestamped_dir}")
+        print(f"All results saved in: {results_dir}")
         
         # 恢复原始结果目录
         Config.RESULTS_DIR = original_results_dir
         
-        return timestamp
+        return timestamp_manager
         
     except Exception as e:
         # 恢复原始结果目录
@@ -281,27 +319,31 @@ def full_pipeline(args):
     print("FULL PIPELINE MODE")
     print("="*60)
     
+    # 创建统一的时间戳管理器
+    timestamp_manager = TimestampManager(args.model or Config.MODEL_NAME)
+    print(f"\nUsing unified timestamp manager: {timestamp_manager}")
+    
     # 1. 训练
     print("\n[Step 1/3] Training...")
-    history, run_id = train_mode(args)
+    history, timestamp_manager = train_mode(args, timestamp_manager)
     
-    # 2. 创建带时间戳的结果目录并评估
+    # 2. 评估（使用相同的时间戳管理器）
     print("\n[Step 2/3] Evaluating...")
-    timestamped_dir, eval_timestamp = create_timestamped_results_dir()
     
-    # 使用训练后的最新检查点（使用run_id）
-    args.checkpoint = os.path.join(Config.CHECKPOINT_DIR, f'best_model_{run_id}.pth')
+    # 使用训练后的最新检查点
+    args.checkpoint = timestamp_manager.get_checkpoint_path('best')
     args.visualize = True
     
-    evaluator, results, _ = evaluate_mode(args, custom_results_dir=timestamped_dir)
+    evaluator, results, _ = evaluate_mode(args, timestamp_manager)
     
     # 3. 完成
     print("\n[Step 3/3] All done!")
     print("\nFull pipeline completed successfully!")
-    print(f"Best model saved at: {args.checkpoint}")
-    print(f"Results saved in: {timestamped_dir}")
+    print(f"Run ID: {timestamp_manager.get_run_id()}")
+    print(f"Best model saved at: {timestamp_manager.get_checkpoint_path('best')}")
+    print(f"Results saved in: {timestamp_manager.get_results_dir()}")
     
-    return history, evaluator, results, eval_timestamp
+    return history, evaluator, results, timestamp_manager
 
 
 def main():

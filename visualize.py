@@ -1,37 +1,55 @@
 """
-可视化模块 - 实现训练曲线、混淆矩阵、误分类样本等可视化
+统一可视化脚本 - 合并训练曲线、混淆矩阵和Grad-CAM可视化
+默认为所有10个类别生成Grad-CAM可视化
 """
+import torch
+import argparse
+import os
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np
-import torch
 import json
-import os
 from sklearn.metrics import confusion_matrix
 
 from config import Config
-from grad_cam import visualize_gradcam, get_target_layer
+from models import get_model
+from data_loader import get_data_loaders
+from grad_cam import GradCAM, visualize_gradcam_per_class, get_target_layer
+
+
+def load_model_from_checkpoint(checkpoint_path, device):
+    """从检查点加载模型"""
+    print(f"Loading checkpoint from {checkpoint_path}...")
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # 获取模型配置
+    model_config = checkpoint.get('config', {})
+    model_name = model_config.get('MODEL_NAME', 'resnet18')
+    num_classes = model_config.get('NUM_CLASSES', 10)
+    
+    # 创建模型
+    model = get_model(model_name, num_classes=num_classes, pretrained=False)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model = model.to(device)
+    model.eval()
+    
+    print(f"Model loaded: {model_name}")
+    print(f"Best validation accuracy: {checkpoint.get('best_val_acc', 0):.2f}%")
+    
+    return model, model_name
 
 
 def plot_training_curves(history_path=None, save_path=None):
-    """
-    绘制训练曲线（损失和准确率）
-    
-    Args:
-        history_path: 训练历史JSON文件路径
-        save_path: 保存图片的路径
-    """
+    """绘制训练曲线（损失和准确率）"""
     if history_path is None:
-        # 首先尝试在RESULTS_DIR中查找（用于带时间戳的结果目录）
         results_history_path = os.path.join(Config.RESULTS_DIR, 'training_history.json')
         if os.path.exists(results_history_path):
             history_path = results_history_path
         else:
-            # 否则使用默认的LOG_DIR路径
             history_path = os.path.join(Config.LOG_DIR, 'training_history.json')
     
     if not os.path.exists(history_path):
-        print(f"History file {history_path} not found.")
+        print(f"History file {history_path} not found. Skipping training curves.")
         return
     
     # 加载训练历史
@@ -52,7 +70,7 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[0, 0].set_title('Training and Validation Loss')
     axes[0, 0].legend()
     axes[0, 0].grid(True, alpha=0.3)
-    axes[0, 0].set_xticks(list(range(0, len(epochs)+1, 5)))  # x轴以5为间隔
+    axes[0, 0].set_xticks(list(range(0, len(epochs)+1, 5)))
 
     # 准确率曲线
     axes[0, 1].plot(epochs, history['train_acc'], 'b-', label='Train Acc', linewidth=2)
@@ -62,7 +80,7 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[0, 1].set_title('Training and Validation Accuracy')
     axes[0, 1].legend()
     axes[0, 1].grid(True, alpha=0.3)
-    axes[0, 1].set_xticks(list(range(0, len(epochs)+1, 5)))  # x轴以5为间隔
+    axes[0, 1].set_xticks(list(range(0, len(epochs)+1, 5)))
 
     # 学习率曲线
     axes[1, 0].plot(epochs, history['lr'], 'g-', linewidth=2)
@@ -71,7 +89,7 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[1, 0].set_title('Learning Rate Schedule')
     axes[1, 0].set_yscale('log')
     axes[1, 0].grid(True, alpha=0.3)
-    axes[1, 0].set_xticks(list(range(0, len(epochs)+1, 5)))  # x轴以5为间隔
+    axes[1, 0].set_xticks(list(range(0, len(epochs)+1, 5)))
 
     # 训练-验证准确率差异
     acc_diff = [t - v for t, v in zip(history['train_acc'], history['val_acc'])]
@@ -81,11 +99,10 @@ def plot_training_curves(history_path=None, save_path=None):
     axes[1, 1].set_ylabel('Accuracy Difference (%)')
     axes[1, 1].set_title('Train-Val Accuracy Gap (Overfitting Indicator)')
     axes[1, 1].grid(True, alpha=0.3)
-    axes[1, 1].set_xticks(list(range(0, len(epochs)+1, 5)))  # x轴以5为间隔
+    axes[1, 1].set_xticks(list(range(0, len(epochs)+1, 5)))
     
     plt.tight_layout()
     
-    # 保存
     if save_path is None:
         save_path = os.path.join(Config.RESULTS_DIR, 'training_curves.png')
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -94,16 +111,27 @@ def plot_training_curves(history_path=None, save_path=None):
     plt.close()
 
 
-def plot_confusion_matrix(y_true, y_pred, save_path=None, normalize=False):
-    """
-    绘制混淆矩阵
+def evaluate_model(model, test_loader, device):
+    """评估模型并返回预测结果"""
+    model.eval()
+    all_preds = []
+    all_labels = []
     
-    Args:
-        y_true: 真实标签
-        y_pred: 预测标签
-        save_path: 保存路径
-        normalize: 是否归一化
-    """
+    print("\nEvaluating model on test set...")
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images = images.to(device)
+            outputs = model(images)
+            _, predicted = outputs.max(1)
+            
+            all_preds.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.numpy())
+    
+    return np.array(all_labels), np.array(all_preds)
+
+
+def plot_confusion_matrix(y_true, y_pred, class_names, save_path=None, normalize=False):
+    """绘制混淆矩阵"""
     cm = confusion_matrix(y_true, y_pred)
     
     if normalize:
@@ -116,8 +144,8 @@ def plot_confusion_matrix(y_true, y_pred, save_path=None, normalize=False):
     
     plt.figure(figsize=(12, 10))
     sns.heatmap(cm, annot=True, fmt=fmt, cmap='Blues',
-                xticklabels=Config.CLASS_NAMES,
-                yticklabels=Config.CLASS_NAMES,
+                xticklabels=class_names,
+                yticklabels=class_names,
                 cbar_kws={'label': 'Count' if not normalize else 'Proportion'})
     
     plt.title(title, fontsize=16, fontweight='bold', pad=20)
@@ -138,18 +166,15 @@ def plot_confusion_matrix(y_true, y_pred, save_path=None, normalize=False):
     plt.close()
 
 
-def plot_per_class_accuracy(per_class_acc, save_path=None):
-    """
-    绘制每个类别的准确率柱状图
+def plot_per_class_accuracy(y_true, y_pred, class_names, save_path=None):
+    """绘制每个类别的准确率柱状图"""
+    cm = confusion_matrix(y_true, y_pred)
+    per_class_acc = cm.diagonal() / cm.sum(axis=1)
     
-    Args:
-        per_class_acc: 每个类别的准确率数组
-        save_path: 保存路径
-    """
     plt.figure(figsize=(12, 6))
     
     colors = plt.cm.RdYlGn(per_class_acc / per_class_acc.max())
-    bars = plt.bar(Config.CLASS_NAMES, per_class_acc * 100, color=colors, edgecolor='black')
+    bars = plt.bar(class_names, per_class_acc * 100, color=colors, edgecolor='black')
     
     # 在柱子上添加数值
     for bar in bars:
@@ -182,228 +207,72 @@ def plot_per_class_accuracy(per_class_acc, save_path=None):
     plt.close()
 
 
-def plot_misclassified_samples(misclassified_samples, num_samples=20, save_path=None):
-    """
-    可视化误分类样本
+def generate_gradcam_visualizations(model, model_name, test_loader, class_names, 
+                                    save_dir, samples_per_class=1):
+    """生成Grad-CAM可视化"""
+    print("\n" + "="*60)
+    print("Generating Grad-CAM Visualizations")
+    print("="*60)
     
-    Args:
-        misclassified_samples: 误分类样本列表
-        num_samples: 要显示的样本数
-        save_path: 保存路径
-    """
-    num_samples = min(num_samples, len(misclassified_samples))
+    # 获取目标层
+    print(f"\nGetting target layer for {model_name}...")
+    target_layer = get_target_layer(model, model_name)
     
-    if num_samples == 0:
-        print("No misclassified samples to plot.")
+    if target_layer is None:
+        print("Error: Could not find target layer for Grad-CAM")
         return
     
-    # 计算网格大小
-    cols = 5
-    rows = (num_samples + cols - 1) // cols
+    print(f"Target layer: {target_layer}")
     
-    fig, axes = plt.subplots(rows, cols, figsize=(15, 3*rows))
-    fig.suptitle('Misclassified Samples', fontsize=16, fontweight='bold')
+    print(f"\nGenerating Grad-CAM...")
+    visualize_gradcam_per_class(model, test_loader, class_names, target_layer,
+                               save_dir=save_dir, samples_per_class=samples_per_class)
     
-    if rows == 1:
-        axes = axes.reshape(1, -1)
-    
-    for idx in range(rows * cols):
-        row = idx // cols
-        col = idx % cols
-        ax = axes[row, col]
-        
-        if idx < num_samples:
-            sample = misclassified_samples[idx]
-            
-            # 反归一化图像
-            img = sample['image'].numpy()
-            img = img.transpose(1, 2, 0)
-            mean = np.array([0.4914, 0.4822, 0.4465])
-            std = np.array([0.2023, 0.1994, 0.2010])
-            img = img * std + mean
-            img = np.clip(img, 0, 1)
-            
-            ax.imshow(img)
-            
-            true_label = Config.CLASS_NAMES[sample['true_label']]
-            pred_label = Config.CLASS_NAMES[sample['pred_label']]
-            confidence = sample['probs'][sample['pred_label']]
-            
-            title = f"True: {true_label}\nPred: {pred_label} ({confidence:.2f})"
-            ax.set_title(title, fontsize=9, color='red')
-        
-        ax.axis('off')
-    
-    plt.tight_layout()
-    
-    if save_path is None:
-        save_path = os.path.join(Config.RESULTS_DIR, 'misclassified_samples.png')
-    
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"Misclassified samples plot saved to {save_path}")
-    
-    plt.close()
+    print(f"\nGrad-CAM visualizations saved to {save_dir}")
 
 
-def plot_top_confusion_pairs(confusion_pairs, top_k=10, save_path=None):
-    """
-    绘制最容易混淆的类别对
-    
-    Args:
-        confusion_pairs: 混淆对列表
-        top_k: 显示前k个
-        save_path: 保存路径
-    """
-    top_pairs = confusion_pairs[:top_k]
-    
-    labels = [f"{p['true_class']}\n→{p['pred_class']}" for p in top_pairs]
-    counts = [p['count'] for p in top_pairs]
-    percentages = [p['percentage'] for p in top_pairs]
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-    fig.suptitle(f'Top {top_k} Confusion Pairs', fontsize=16, fontweight='bold')
-    
-    # 按数量
-    colors1 = plt.cm.Reds(np.linspace(0.4, 0.8, len(counts)))
-    bars1 = ax1.barh(labels, counts, color=colors1, edgecolor='black')
-    ax1.set_xlabel('Count', fontsize=12)
-    ax1.set_title('By Absolute Count', fontsize=14)
-    ax1.invert_yaxis()
-    
-    for i, (bar, count) in enumerate(zip(bars1, counts)):
-        ax1.text(count, bar.get_y() + bar.get_height()/2, 
-                f' {count}', va='center', fontsize=10)
-    
-    # 按百分比
-    colors2 = plt.cm.Oranges(np.linspace(0.4, 0.8, len(percentages)))
-    bars2 = ax2.barh(labels, percentages, color=colors2, edgecolor='black')
-    ax2.set_xlabel('Percentage (%)', fontsize=12)
-    ax2.set_title('By Percentage of True Class', fontsize=14)
-    ax2.invert_yaxis()
-    
-    for i, (bar, pct) in enumerate(zip(bars2, percentages)):
-        ax2.text(pct, bar.get_y() + bar.get_height()/2,
-                f' {pct:.1f}%', va='center', fontsize=10)
-    
-    plt.tight_layout()
-    
-    if save_path is None:
-        save_path = os.path.join(Config.RESULTS_DIR, 'top_confusion_pairs.png')
-    
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"Top confusion pairs plot saved to {save_path}")
-    
-    plt.close()
-
-
-def visualize_all(evaluator):
-    """
-    生成所有可视化图表
-    
-    Args:
-        evaluator: Evaluator对象
-    """
-    print("\nGenerating all visualizations...")
-    
-    # 1. 训练曲线
-    plot_training_curves()
-    
-    # 2. 混淆矩阵
-    plot_confusion_matrix(evaluator.all_targets, evaluator.all_predictions)
-    
-    # 3. 每类准确率
-    per_class_acc = evaluator.compute_per_class_accuracy()
-    plot_per_class_accuracy(per_class_acc)
-    
-    # 4. 误分类样本
-    if Config.PLOT_MISCLASSIFIED:
-        _, sorted_misclassified = evaluator.analyze_misclassified_samples(
-            Config.NUM_MISCLASSIFIED_SAMPLES
-        )
-        plot_misclassified_samples(sorted_misclassified, Config.NUM_MISCLASSIFIED_SAMPLES)
-    
-    # 5. Top混淆对
-    confusion_pairs = evaluator.get_confusion_pairs()
-    plot_top_confusion_pairs(confusion_pairs)
-    
-    # 6. Grad-CAM可视化
-    if Config.ENABLE_GRADCAM:
-        print("\nGenerating Grad-CAM visualizations...")
-        try:
-            # 获取目标层
-            model_name = evaluator.model.__class__.__name__.lower()
-            if hasattr(evaluator, 'checkpoint') and 'config' in evaluator.checkpoint:
-                model_name = evaluator.checkpoint['config'].get('MODEL_NAME', model_name)
-            
-            target_layer = get_target_layer(evaluator.model, model_name)
-            
-            if target_layer is not None:
-                # 获取一批测试数据
-                test_images, test_labels = next(iter(evaluator.test_loader))
-                test_images = test_images.to(evaluator.device)
-                
-                # 生成Grad-CAM
-                gradcam_dir = Config.GRADCAM_SAVE_DIR
-                os.makedirs(gradcam_dir, exist_ok=True)
-                
-                visualize_gradcam(
-                    evaluator.model,
-                    test_images,
-                    test_labels,
-                    Config.CLASS_NAMES,
-                    target_layer,
-                    save_dir=gradcam_dir,
-                    num_samples=Config.GRADCAM_NUM_SAMPLES
-                )
-            else:
-                print("Warning: Could not find target layer for Grad-CAM")
-        except Exception as e:
-            print(f"Warning: Grad-CAM visualization failed: {e}")
-    
-    print("\nAll visualizations completed!")
-    print(f"Results saved in: {Config.RESULTS_DIR}")
-
-
-def create_analysis_report(evaluator, save_path=None):
-    """
-    创建误分类分析报告
-    
-    Args:
-        evaluator: Evaluator对象
-        save_path: 保存路径
-    """
+def create_analysis_report(y_true, y_pred, class_names, save_path=None):
+    """创建分析报告"""
     if save_path is None:
         save_path = os.path.join(Config.RESULTS_DIR, 'analysis.md')
     
+    cm = confusion_matrix(y_true, y_pred)
+    per_class_acc = cm.diagonal() / cm.sum(axis=1)
+    
     with open(save_path, 'w', encoding='utf-8') as f:
-        f.write("# CIFAR-10 分类模型误分类分析报告\n\n")
+        f.write("# CIFAR-10 分类模型分析报告\n\n")
         
-        # 1. 基本统计
         f.write("## 1. 基本统计信息\n\n")
-        total_samples = len(evaluator.all_targets)
-        correct_samples = sum([1 for t, p in zip(evaluator.all_targets, evaluator.all_predictions) if t == p])
-        misclassified_samples = len(evaluator.misclassified_samples)
+        total_samples = len(y_true)
+        correct_samples = (y_true == y_pred).sum()
+        misclassified_samples = total_samples - correct_samples
         
         f.write(f"- 总样本数: {total_samples}\n")
         f.write(f"- 正确分类: {correct_samples} ({correct_samples/total_samples*100:.2f}%)\n")
         f.write(f"- 误分类: {misclassified_samples} ({misclassified_samples/total_samples*100:.2f}%)\n\n")
         
-        # 2. 每类准确率
         f.write("## 2. 每类准确率分析\n\n")
-        cm = evaluator.compute_confusion_matrix()
-        per_class_acc = cm.diagonal() / cm.sum(axis=1)
-        
         f.write("| 类别 | 准确率 | 正确数/总数 |\n")
         f.write("|------|--------|-------------|\n")
-        for i, class_name in enumerate(Config.CLASS_NAMES):
+        for i, class_name in enumerate(class_names):
             correct = cm[i, i]
             total = cm[i].sum()
             f.write(f"| {class_name:12s} | {per_class_acc[i]*100:6.2f}% | {correct}/{total} |\n")
         f.write("\n")
         
-        # 3. 最容易混淆的类别对
         f.write("## 3. 最容易混淆的类别对\n\n")
-        confusion_pairs = evaluator.get_confusion_pairs()
+        confusion_pairs = []
+        for i in range(len(class_names)):
+            for j in range(len(class_names)):
+                if i != j and cm[i, j] > 0:
+                    confusion_pairs.append({
+                        'true_class': class_names[i],
+                        'pred_class': class_names[j],
+                        'count': cm[i, j],
+                        'percentage': cm[i, j] / cm[i].sum() * 100
+                    })
+        
+        confusion_pairs.sort(key=lambda x: x['count'], reverse=True)
         
         f.write("| 排名 | 真实类别 | 预测类别 | 数量 | 占比 |\n")
         f.write("|------|----------|----------|------|------|\n")
@@ -412,57 +281,145 @@ def create_analysis_report(evaluator, save_path=None):
                    f"{pair['count']:3d} | {pair['percentage']:.1f}% |\n")
         f.write("\n")
         
-        # 4. 误分类样本分析
-        f.write("## 4. 典型误分类样本分析\n\n")
-        analysis, sorted_samples = evaluator.analyze_misclassified_samples(num_samples=10)
-        
-        f.write("以下是模型最自信的错误预测（按预测置信度排序）:\n\n")
-        for i, sample_info in enumerate(analysis['samples'][:10]):
-            f.write(f"### 样本 {i+1}\n\n")
-            f.write(f"- **真实类别**: {sample_info['true_class']}\n")
-            f.write(f"- **预测类别**: {sample_info['predicted_class']}\n")
-            f.write(f"- **预测置信度**: {sample_info['confidence']:.4f}\n")
-            f.write(f"- **真实类别概率**: {sample_info['true_class_prob']:.4f}\n\n")
-        
-        # 5. 分析和建议
-        f.write("## 5. 分析与改进建议\n\n")
-        
-        # 找出表现最差的类别
+        f.write("## 4. 分析与改进建议\n\n")
         worst_classes = np.argsort(per_class_acc)[:3]
-        f.write("### 5.1 表现最差的类别\n\n")
+        f.write("### 4.1 表现最差的类别\n\n")
         for i in worst_classes:
-            f.write(f"- **{Config.CLASS_NAMES[i]}** (准确率: {per_class_acc[i]*100:.2f}%)\n")
+            f.write(f"- **{class_names[i]}** (准确率: {per_class_acc[i]*100:.2f}%)\n")
         f.write("\n")
         
-        # 主要混淆模式
-        f.write("### 5.2 主要混淆模式\n\n")
-        top_confusion = confusion_pairs[0]
-        f.write(f"最常见的混淆是将 **{top_confusion['true_class']}** "
-               f"误分类为 **{top_confusion['pred_class']}**，"
-               f"共 {top_confusion['count']} 个样本 ({top_confusion['percentage']:.1f}%)。\n\n")
-        
-        f.write("### 5.3 改进建议\n\n")
-        f.write("1. **数据增强**: 针对表现较差的类别增加数据增强策略\n")
-        f.write("2. **类别平衡**: 检查训练数据是否存在类别不平衡问题\n")
-        f.write("3. **特征学习**: 对易混淆的类别对，可以尝试:\n")
-        f.write("   - 增加模型深度或复杂度\n")
-        f.write("   - 使用注意力机制关注关键特征\n")
-        f.write("   - 采用对比学习增强类别间的区分度\n")
-        f.write("4. **损失函数**: 考虑使用Focal Loss等应对困难样本\n")
-        f.write("5. **集成方法**: 使用模型集成来提高整体性能\n\n")
+        if confusion_pairs:
+            f.write("### 4.2 主要混淆模式\n\n")
+            top_confusion = confusion_pairs[0]
+            f.write(f"最常见的混淆是将 **{top_confusion['true_class']}** "
+                   f"误分类为 **{top_confusion['pred_class']}**，"
+                   f"共 {top_confusion['count']} 个样本 ({top_confusion['percentage']:.1f}%)。\n\n")
     
     print(f"Analysis report saved to {save_path}")
 
 
+def main():
+    parser = argparse.ArgumentParser(description='Unified Visualization for CIFAR-10 Classification')
+    
+    # 基本参数
+    parser.add_argument('--checkpoint', type=str, default='checkpoints/best_model.pth',
+                       help='模型检查点路径')
+    parser.add_argument('--save-dir', type=str, default='results/visualizations',
+                       help='保存目录')
+    
+    # Grad-CAM参数
+    parser.add_argument('--samples-per-class', type=int, default=1,
+                       help='每个类别的Grad-CAM样本数量（默认为1，即为所有10个类别生成）')
+    parser.add_argument('--skip-gradcam', action='store_true',
+                       help='跳过Grad-CAM可视化')
+    
+    # 其他可视化参数
+    parser.add_argument('--skip-training-curves', action='store_true',
+                       help='跳过训练曲线')
+    parser.add_argument('--skip-confusion-matrix', action='store_true',
+                       help='跳过混淆矩阵')
+    parser.add_argument('--skip-per-class-acc', action='store_true',
+                       help='跳过每类准确率图')
+    parser.add_argument('--skip-analysis', action='store_true',
+                       help='跳过分析报告')
+    
+    args = parser.parse_args()
+    
+    # 创建保存目录
+    os.makedirs(args.save_dir, exist_ok=True)
+    
+    print("="*60)
+    print("CIFAR-10 Unified Visualization Tool")
+    print("="*60)
+    
+    # 设置设备
+    device = Config.DEVICE
+    print(f"\nUsing device: {device}")
+    
+    # 加载模型
+    print("\n" + "-"*60)
+    print("Loading Model")
+    print("-"*60)
+    model, model_name = load_model_from_checkpoint(args.checkpoint, device)
+    
+    # 加载数据
+    print("\n" + "-"*60)
+    print("Loading Data")
+    print("-"*60)
+    _, _, test_loader = get_data_loaders()
+    
+    # 1. 训练曲线
+    if not args.skip_training_curves:
+        print("\n" + "-"*60)
+        print("1. Training Curves")
+        print("-"*60)
+        plot_training_curves(save_path=os.path.join(args.save_dir, 'training_curves.png'))
+    
+    # 评估模型（用于混淆矩阵和每类准确率）
+    if not (args.skip_confusion_matrix and args.skip_per_class_acc and args.skip_analysis):
+        print("\n" + "-"*60)
+        print("Model Evaluation")
+        print("-"*60)
+        y_true, y_pred = evaluate_model(model, test_loader, device)
+        accuracy = (y_true == y_pred).mean() * 100
+        print(f"Overall Accuracy: {accuracy:.2f}%")
+    
+    # 2. 混淆矩阵
+    if not args.skip_confusion_matrix:
+        print("\n" + "-"*60)
+        print("2. Confusion Matrix")
+        print("-"*60)
+        plot_confusion_matrix(y_true, y_pred, Config.CLASS_NAMES, 
+                            save_path=os.path.join(args.save_dir, 'confusion_matrix.png'))
+        plot_confusion_matrix(y_true, y_pred, Config.CLASS_NAMES, 
+                            save_path=os.path.join(args.save_dir, 'confusion_matrix_normalized.png'),
+                            normalize=True)
+    
+    # 3. 每类准确率
+    if not args.skip_per_class_acc:
+        print("\n" + "-"*60)
+        print("3. Per-Class Accuracy")
+        print("-"*60)
+        plot_per_class_accuracy(y_true, y_pred, Config.CLASS_NAMES,
+                               save_path=os.path.join(args.save_dir, 'per_class_accuracy.png'))
+    
+    # 4. Grad-CAM可视化
+    if not args.skip_gradcam:
+        print("\n" + "-"*60)
+        print("4. Grad-CAM Visualizations (All 10 Classes)")
+        print("-"*60)
+        gradcam_dir = os.path.join(args.save_dir, 'gradcam')
+        os.makedirs(gradcam_dir, exist_ok=True)
+        generate_gradcam_visualizations(model, model_name, test_loader, Config.CLASS_NAMES,
+                                       gradcam_dir, args.samples_per_class)
+    
+    # 5. 分析报告
+    if not args.skip_analysis:
+        print("\n" + "-"*60)
+        print("5. Analysis Report")
+        print("-"*60)
+        create_analysis_report(y_true, y_pred, Config.CLASS_NAMES,
+                              save_path=os.path.join(args.save_dir, 'analysis.md'))
+    
+    # 总结
+    print("\n" + "="*60)
+    print("All Visualizations Completed!")
+    print("="*60)
+    print(f"\nResults saved in: {args.save_dir}")
+    print("\nGenerated files:")
+    if not args.skip_training_curves:
+        print("training_curves.png")
+    if not args.skip_confusion_matrix:
+        print("confusion_matrix.png")
+        print("confusion_matrix_normalized.png")
+    if not args.skip_per_class_acc:
+        print("per_class_accuracy.png")
+    if not args.skip_gradcam:
+        print("gradcam/gradcam_all_classes.png")
+    if not args.skip_analysis:
+        print("analysis.md")
+    print("="*60)
+
+
 if __name__ == "__main__":
-    from evaluate import Evaluator
-    
-    # 创建评估器并评估
-    evaluator = Evaluator()
-    evaluator.evaluate()
-    
-    # 生成所有可视化
-    visualize_all(evaluator)
-    
-    # 生成分析报告
-    create_analysis_report(evaluator)
+    main()

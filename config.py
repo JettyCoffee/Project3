@@ -15,7 +15,7 @@ class Config:
     RESULTS_DIR = os.path.join(PROJECT_ROOT, 'results')
     
     # 设备配置
-    GPU_ID = 2  # 使用的GPU编号
+    GPU_ID = 0  # 使用的GPU编号
     DEVICE = torch.device(f'cuda:{GPU_ID}' if torch.cuda.is_available() else 'cpu')
     NUM_WORKERS = 3
     
