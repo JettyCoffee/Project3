@@ -402,75 +402,6 @@ class ResNet18(nn.Module):
         return x
 
 
-class VGG16(nn.Module):
-    """
-    VGG-16 模型（适配CIFAR-10）
-    精简版本，适合小尺寸图像
-    """
-    def __init__(self, num_classes=10):
-        super(VGG16, self).__init__()
-        
-        self.features = nn.Sequential(
-            # Block 1
-            nn.Conv2d(3, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            # Block 2
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            # Block 3
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            # Block 4
-            nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-        )
-        
-        self.classifier = nn.Sequential(
-            nn.Linear(512 * 2 * 2, 512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(512, 512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(512, num_classes),
-        )
-        
-    def forward(self, x):
-        x = self.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x
-
-
 class PatchEmbedding(nn.Module):
     """
     Vision Transformer的Patch Embedding层
@@ -650,13 +581,13 @@ def get_model(model_name='custom_cnn', num_classes=10, pretrained=False):
         else:
             # 本地实现的resnet模型
             model = ResNet18(num_classes=num_classes)
-            
+    
     elif model_name == 'resnet34':
         model = models.resnet34(pretrained=pretrained)
         model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
         model.maxpool = nn.Identity()
         model.fc = nn.Linear(model.fc.in_features, num_classes)
-    
+
     elif model_name == 'resnet50':
         model = models.resnet50(pretrained=pretrained)
         model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
@@ -665,25 +596,14 @@ def get_model(model_name='custom_cnn', num_classes=10, pretrained=False):
     
     elif model_name == 'wide_resnet':
         # Wide ResNet with Cutout
+        #model = WideResNet(depth=28, widen_factor=10, dropout_rate=0.3, 
+        #                  num_classes=num_classes, cutout_length=16)
         model = WideResNet(depth=28, widen_factor=10, dropout_rate=0.3, 
                           num_classes=num_classes, cutout_length=16)
-    
-    elif model_name == 'wide_resnet_small':
-        # Smaller Wide ResNet variant
-        model = WideResNet(depth=16, widen_factor=8, dropout_rate=0.3, 
-                          num_classes=num_classes, cutout_length=12)
 
     elif model_name == 'dla34':
         # Deep Layer Aggregation
         model = dla34(num_classes=num_classes)
-
-    # vgg16的效果差，暂时去除    
-    #elif model_name == 'vgg16':
-    #    if pretrained:
-    #        model = models.vgg16_bn(pretrained=True)
-    #        model.classifier[6] = nn.Linear(model.classifier[6].in_features, num_classes)
-    #    else:
-    #        model = VGG16(num_classes=num_classes)
     
     elif model_name == 'vit':
         # Vision Transformer for CIFAR-10
@@ -698,21 +618,6 @@ def get_model(model_name='custom_cnn', num_classes=10, pretrained=False):
             mlp_ratio=4.0,
             dropout=0.1
         )
-    
-    elif model_name == 'vit_small':
-        # Smaller ViT variant
-        model = VisionTransformer(
-            img_size=32,
-            patch_size=4,
-            in_channels=3,
-            num_classes=num_classes,
-            embed_dim=128,
-            depth=8,
-            num_heads=4,
-            mlp_ratio=3.0,
-            dropout=0.1
-        )
-
         
     else:
         raise ValueError(f"Unknown model name: {model_name}")

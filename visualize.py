@@ -22,7 +22,13 @@ def plot_training_curves(history_path=None, save_path=None):
         save_path: 保存图片的路径
     """
     if history_path is None:
-        history_path = os.path.join(Config.LOG_DIR, 'training_history.json')
+        # 首先尝试在RESULTS_DIR中查找（用于带时间戳的结果目录）
+        results_history_path = os.path.join(Config.RESULTS_DIR, 'training_history.json')
+        if os.path.exists(results_history_path):
+            history_path = results_history_path
+        else:
+            # 否则使用默认的LOG_DIR路径
+            history_path = os.path.join(Config.LOG_DIR, 'training_history.json')
     
     if not os.path.exists(history_path):
         print(f"History file {history_path} not found.")

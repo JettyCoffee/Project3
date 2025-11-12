@@ -15,9 +15,9 @@ class Config:
     RESULTS_DIR = os.path.join(PROJECT_ROOT, 'results')
     
     # 设备配置
-    GPU_ID = 0  # 使用的GPU编号，如果有多个GPU可以指定
+    GPU_ID = 2  # 使用的GPU编号
     DEVICE = torch.device(f'cuda:{GPU_ID}' if torch.cuda.is_available() else 'cpu')
-    NUM_WORKERS = 8
+    NUM_WORKERS = 3
     
     # 数据集配置
     DATASET_NAME = 'CIFAR10'
@@ -32,27 +32,22 @@ class Config:
     TRAIN_RATIO = 0.9  # 训练集占比
     VAL_RATIO = 0.1    # 验证集占比
 
-    # 训练超参数
-    BATCH_SIZE = 128
+    # 训练超参数（学习率调度 使用余弦退火）
+    BATCH_SIZE = 256
     NUM_EPOCHS = 100
     LEARNING_RATE = 0.1 # 初始学习率
     MOMENTUM = 0.9 # 动量因子
-    WEIGHT_DECAY = 5e-4 # L2正则化系数
-    
-    # 学习率调度
-    LR_SCHEDULER = 'cosine'  # 'cosine', 'step', 'multistep'
-    LR_STEP_SIZE = 40 # cosine不需要该参数
-    LR_GAMMA = 0.1 # 
-    LR_MILESTONES = [60, 120, 160] # 多步调度的里程碑
+    WEIGHT_DECAY = 0.0005 # L2正则化系数
+    LR_SCHEDULER = 'cosine'
     
     # 早停配置
     EARLY_STOPPING = True
-    PATIENCE = 15  # 在验证集上多少个epoch没有提升就停止
+    PATIENCE = 25 # 在验证集上多少个epoch没有提升就停止
     MIN_DELTA = 0.001  # 最小改善量
     
     # 模型选择
-    MODEL_NAME = 'wide_resnet_small'  # 'resnet18', 'resnet34', 'resnet50', 'wide_resnet', 'wide_resnet_small', 'dla34', 'vit', 'vit_small'
-    PRETRAINED = True  # 是否使用预训练权重
+    MODEL_NAME = 'wide_resnet'  # 'resnet18/34/50', 'wide_resnet', 'dla34', 'vit'
+    PRETRAINED = False  # 是否使用预训练权重
     
     # 数据增强配置
     DATA_AUGMENTATION = True

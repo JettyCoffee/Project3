@@ -146,11 +146,12 @@ def train_mode(args):
     # 开始训练
     history = trainer.train()
     
-    # 训练完成后重命名检查点添加时间戳
-    timestamp = rename_checkpoint_with_timestamp()
+    # 获取训练器的run_id（包含模型名和时间戳）
+    run_id = trainer.run_id
     
-    print(f"\nTraining completed successfully! Timestamp: {timestamp}")
-    return history, timestamp
+    print(f"\nTraining completed successfully! Run ID: {run_id}")
+    print(f"Best model saved at: checkpoints/best_model_{run_id}.pth")
+    return history, run_id
 
 
 def evaluate_mode(args, custom_results_dir=None):
@@ -162,13 +163,14 @@ def evaluate_mode(args, custom_results_dir=None):
     # 创建带时间戳的结果目录（如果没有提供自定义目录）
     if custom_results_dir is None:
         timestamped_dir, timestamp = create_timestamped_results_dir()
-        # 临时更改Config.RESULTS_DIR
-        original_results_dir = Config.RESULTS_DIR
-        Config.RESULTS_DIR = timestamped_dir
         print(f"Results will be saved to: {timestamped_dir}")
     else:
         timestamped_dir = custom_results_dir
         timestamp = os.path.basename(custom_results_dir)
+    
+    # 临时更改Config.RESULTS_DIR
+    original_results_dir = Config.RESULTS_DIR
+    Config.RESULTS_DIR = timestamped_dir
     
     # 确定检查点路径
     if args.checkpoint:
@@ -177,6 +179,19 @@ def evaluate_mode(args, custom_results_dir=None):
         checkpoint_path = os.path.join(Config.CHECKPOINT_DIR, 'best_model.pth')
     
     try:
+        # 复制训练历史文件到结果目录（如果存在）
+        history_path = os.path.join(Config.LOG_DIR, 'training_history.json')
+        if os.path.exists(history_path):
+            target_history_path = os.path.join(timestamped_dir, 'training_history.json')
+            shutil.copy2(history_path, target_history_path)
+            print(f"Training history copied to: {target_history_path}")
+        
+        # 复制最佳模型到结果目录
+        if os.path.exists(checkpoint_path):
+            target_model_path = os.path.join(timestamped_dir, os.path.basename(checkpoint_path))
+            shutil.copy2(checkpoint_path, target_model_path)
+            print(f"Model checkpoint copied to: {target_model_path}")
+        
         # 评估
         evaluator, results = evaluate_model(checkpoint_path)
         
@@ -190,17 +205,16 @@ def evaluate_mode(args, custom_results_dir=None):
         save_hyperparameters(timestamped_dir, args)
         
         print("\nEvaluation completed successfully!")
+        print(f"All results saved in: {timestamped_dir}")
         
         # 恢复原始结果目录
-        if custom_results_dir is None:
-            Config.RESULTS_DIR = original_results_dir
+        Config.RESULTS_DIR = original_results_dir
             
         return evaluator, results, timestamp
         
     except Exception as e:
         # 恢复原始结果目录
-        if custom_results_dir is None:
-            Config.RESULTS_DIR = original_results_dir
+        Config.RESULTS_DIR = original_results_dir
         raise e
 
 
@@ -214,14 +228,27 @@ def visualize_mode(args):
     
     # 创建带时间戳的结果目录
     timestamped_dir, timestamp = create_timestamped_results_dir()
+    print(f"Results will be saved to: {timestamped_dir}")
+    
     # 临时更改Config.RESULTS_DIR
     original_results_dir = Config.RESULTS_DIR
     Config.RESULTS_DIR = timestamped_dir
-    print(f"Results will be saved to: {timestamped_dir}")
     
     try:
+        # 复制训练历史文件到结果目录（如果存在）
+        history_path = os.path.join(Config.LOG_DIR, 'training_history.json')
+        if os.path.exists(history_path):
+            target_history_path = os.path.join(timestamped_dir, 'training_history.json')
+            shutil.copy2(history_path, target_history_path)
+            print(f"Training history copied to: {target_history_path}")
+        
         # 创建评估器
         checkpoint_path = args.checkpoint if args.checkpoint else None
+        if checkpoint_path and os.path.exists(checkpoint_path):
+            target_model_path = os.path.join(timestamped_dir, os.path.basename(checkpoint_path))
+            shutil.copy2(checkpoint_path, target_model_path)
+            print(f"Model checkpoint copied to: {target_model_path}")
+        
         evaluator = Evaluator(checkpoint_path)
         
         # 评估（生成数据）
@@ -235,6 +262,7 @@ def visualize_mode(args):
         save_hyperparameters(timestamped_dir, args)
         
         print("\nVisualization completed successfully!")
+        print(f"All results saved in: {timestamped_dir}")
         
         # 恢复原始结果目录
         Config.RESULTS_DIR = original_results_dir
@@ -255,14 +283,14 @@ def full_pipeline(args):
     
     # 1. 训练
     print("\n[Step 1/3] Training...")
-    history, train_timestamp = train_mode(args)
+    history, run_id = train_mode(args)
     
     # 2. 创建带时间戳的结果目录并评估
     print("\n[Step 2/3] Evaluating...")
     timestamped_dir, eval_timestamp = create_timestamped_results_dir()
     
-    # 使用训练后的最新检查点
-    args.checkpoint = os.path.join(Config.CHECKPOINT_DIR, f'best_model_{train_timestamp}.pth')
+    # 使用训练后的最新检查点（使用run_id）
+    args.checkpoint = os.path.join(Config.CHECKPOINT_DIR, f'best_model_{run_id}.pth')
     args.visualize = True
     
     evaluator, results, _ = evaluate_mode(args, custom_results_dir=timestamped_dir)
@@ -281,20 +309,6 @@ def main():
     parser = argparse.ArgumentParser(
         description='CIFAR-10 Image Classification with CNN',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # 训练模型
-  python main.py --mode train --model resnet18 --epochs 100
-
-  # 评估模型
-  python main.py --mode eval --checkpoint checkpoints/best_model.pth
-
-  # 只生成可视化
-  python main.py --mode visualize
-
-  # 完整流程（训练+评估+可视化）
-  python main.py --mode full --model resnet18 --epochs 50
-        """
     )
     
     # 模式选择
@@ -305,7 +319,7 @@ Examples:
     # 训练相关参数
     parser.add_argument('--model', type=str, default=None,
                        choices=['resnet18', 'resnet34', 'resnet50', 'wide_resnet', 
-                               'wide_resnet_small', 'dla34', 'vit', 'vit_small'],
+                               'wide_resnet_small', 'dla34', 'vit'],
                        help='模型架构')
     parser.add_argument('--epochs', type=int, default=None,
                        help='训练轮数')
